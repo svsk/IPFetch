@@ -26,6 +26,7 @@ namespace IPFetch
         private string _ipAddressProviderUrl;
         private string _mailgunAPIKey;
         private string _mailgunDomainName;
+        private bool _emailSentSinceLastUpdate;
 
         public IPFetchService()
         {
@@ -90,8 +91,13 @@ namespace IPFetch
 
                 WriteIPToFile(currentIP);
                 _cachedIP = currentIP;
-                SendEmail(currentIP);
                 UpdateDNS();
+                _emailSentSinceLastUpdate = false;
+            }
+
+            if (!_emailSentSinceLastUpdate)
+            {
+                SendEmail(_cachedIP);
             }
         }
 
@@ -146,19 +152,28 @@ namespace IPFetch
 
             _logger.Info("Sending notification email");
 
-            RestClient client = new RestClient();
-            client.BaseUrl = new Uri("https://api.mailgun.net/v3");
-            client.Authenticator = new HttpBasicAuthenticator("api", $"{_mailgunAPIKey}");
-            RestRequest request = new RestRequest();
-            request.AddParameter("domain", _mailgunDomainName, ParameterType.UrlSegment);
-            request.Resource = "{domain}/messages";
-            request.AddParameter("from", $"IPFetch <ipfetch-noreply@{_mailgunDomainName}>");
-            request.AddParameter("to", $"{_receiverName} <{_receiverEmail}>");
-            request.AddParameter("subject", $"IPFetch update for {_machineName}");
-            request.AddParameter("text", $"Hi {_receiverName},\r\n\r\nThe IP for your machine ({_machineName}) has changed since we last checked and is now: {ipAddress}");
-            request.Method = Method.POST;
+            try
+            {
+                RestClient client = new RestClient();
+                client.BaseUrl = new Uri("https://api.mailgun.net/v3");
+                client.Authenticator = new HttpBasicAuthenticator("api", $"{_mailgunAPIKey}");
+                RestRequest request = new RestRequest();
+                request.AddParameter("domain", _mailgunDomainName, ParameterType.UrlSegment);
+                request.Resource = "{domain}/messages";
+                request.AddParameter("from", $"IPFetch <ipfetch-noreply@{_mailgunDomainName}>");
+                request.AddParameter("to", $"{_receiverName} <{_receiverEmail}>");
+                request.AddParameter("subject", $"IPFetch update for {_machineName}");
+                request.AddParameter("text",
+                    $"Hi {_receiverName},\r\n\r\nThe IP for your machine ({_machineName}) has changed since we last checked and is now: {ipAddress}");
+                request.Method = Method.POST;
 
-            client.Execute(request);
+                client.Execute(request);
+                _emailSentSinceLastUpdate = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("Failed to send e-mail notification.", ex);
+            }
         }
 
         private void UpdateDNS()
