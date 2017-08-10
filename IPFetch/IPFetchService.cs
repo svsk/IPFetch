@@ -184,14 +184,17 @@ namespace IPFetch
 
                 foreach (var url in _dnsUpdateUrls)
                 {
-                    try
+                    if (!string.IsNullOrWhiteSpace(url))
                     {
-                        var response = new WebClient().DownloadString(url);
-                        _logger.Info(response);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error($"Failed to update DNS ({url})", ex);
+                        try
+                        {
+                            var response = new WebClient().DownloadString(url);
+                            _logger.Info(response);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Error($"Failed to update DNS ({url})", ex);
+                        }
                     }
                 }
 
