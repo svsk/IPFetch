@@ -26,7 +26,6 @@ namespace IPFetch
         private string _ipAddressProviderUrl;
         private string _mailgunAPIKey;
         private string _mailgunDomainName;
-        private bool _emailSentSinceLastUpdate;
 
         public IPFetchService()
         {
@@ -92,11 +91,6 @@ namespace IPFetch
                 WriteIPToFile(currentIP);
                 _cachedIP = currentIP;
                 UpdateDNS();
-                _emailSentSinceLastUpdate = false;
-            }
-
-            if (!_emailSentSinceLastUpdate)
-            {
                 SendEmail(_cachedIP);
             }
         }
@@ -168,7 +162,6 @@ namespace IPFetch
                 request.Method = Method.POST;
 
                 client.Execute(request);
-                _emailSentSinceLastUpdate = true;
             }
             catch (Exception ex)
             {
