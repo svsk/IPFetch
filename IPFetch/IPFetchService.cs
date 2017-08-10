@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Configuration;
-using System.IO;
 using System.Net;
 using System.ServiceProcess;
 using System.Threading;
@@ -17,7 +16,6 @@ namespace IPFetch
 
         private bool _keepRunning = true;
         private int _checkIntervalSec;
-        private string _cachedIP;
         private string _receiverEmail;
         private string _receiverName;
         private string _machineName;
@@ -26,7 +24,7 @@ namespace IPFetch
         private string _ipAddressProviderUrl;
         private string _mailgunAPIKey;
         private string _mailgunDomainName;
-        private bool _emailSentSinceLastUpdate;
+        private IPFetchDataCache _dataCache;
 
         public IPFetchService()
         {
@@ -50,6 +48,7 @@ namespace IPFetch
                 _mailgunAPIKey = ConfigurationManager.AppSettings["mailgunAPIKey"];
                 _mailgunDomainName = ConfigurationManager.AppSettings["mailgunDomainName"];
                 _machineName = Environment.MachineName;
+                _dataCache = IPFetchDataCache.GetOrCreate(_cachePath);
             }
             catch (Exception ex)
             {
@@ -83,21 +82,20 @@ namespace IPFetch
         private void CheckIP()
         {
             var currentIP = GetCurrentIP();
-            _cachedIP = string.IsNullOrEmpty(_cachedIP) ? ReadIPFromFile() : _cachedIP;
 
-            if (currentIP != _cachedIP && currentIP != null)
+            if (currentIP != _dataCache.CachedIP && currentIP != null)
             {
                 _logger.Info("IP has changed!");
 
-                WriteIPToFile(currentIP);
-                _cachedIP = currentIP;
+                _dataCache.CachedIP = currentIP;
+                _dataCache.NotificationSentSinceLastChange = false;
+                _dataCache.Save();
                 UpdateDNS();
-                _emailSentSinceLastUpdate = false;
             }
 
-            if (!_emailSentSinceLastUpdate)
+            if (!_dataCache.NotificationSentSinceLastChange)
             {
-                SendEmail(_cachedIP);
+                SendEmail(_dataCache.CachedIP);
             }
         }
 
@@ -112,33 +110,6 @@ namespace IPFetch
             {
                 _logger.Error("Unable to get IP address from provider", ex);
                 return null;
-            }
-        }
-
-        private string ReadIPFromFile()
-        {
-            try
-            {
-                return File.ReadAllText(_cachePath);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex);
-                return string.Empty;
-            }
-        }
-
-        private void WriteIPToFile(string fileContent)
-        {
-            _logger.Info("Writing IP to cache file");
-
-            try
-            {
-                File.WriteAllText(_cachePath, fileContent);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex);
             }
         }
 
@@ -168,7 +139,8 @@ namespace IPFetch
                 request.Method = Method.POST;
 
                 client.Execute(request);
-                _emailSentSinceLastUpdate = true;
+                _dataCache.NotificationSentSinceLastChange = true;
+                _dataCache.Save();
             }
             catch (Exception ex)
             {

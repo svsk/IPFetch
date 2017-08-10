@@ -55,6 +55,9 @@
       <HintPath>..\packages\log4net.2.0.8\lib\net45-full\log4net.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>..\packages\Newtonsoft.Json.10.0.2\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
     <Reference Include="RestClient, Version=2.3.14.7, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\packages\RestClient.2.3.14.7\lib\net451\RestClient.dll</HintPath>
       <Private>True</Private>
@@ -75,6 +78,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="IPFetchDataCache.cs" />
     <Compile Include="IPFetchService.cs">
       <SubType>Component</SubType>
     </Compile>
