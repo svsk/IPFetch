@@ -1,177 +1,158 @@
-﻿using System;
-using System.Configuration;
-using System.Net;
-using System.ServiceProcess;
-using System.Threading;
-using System.Threading.Tasks;
-using log4net;
+﻿using System.Text.Json;
+using IPFetch.Configuration;
+using Microsoft.Extensions.Options;
 using RestSharp;
 using RestSharp.Authenticators;
 
-namespace IPFetch
+public class IPFetchService
 {
-    public partial class IPFetchService : ServiceBase
-    {
-        private readonly ILog _logger;
+	private readonly ILogger<IPFetchService> _logger;
+	private readonly IOptions<IPFetchConfig> _config;
+	private static HttpClient _httpClient = new HttpClient();
 
-        private bool _keepRunning = true;
-        private int _checkIntervalSec;
-        private string _receiverEmail;
-        private string _receiverName;
-        private string _machineName;
-        private string _cachePath;
-        private string[] _dnsUpdateUrls;
-        private string _ipAddressProviderUrl;
-        private string _mailgunAPIKey;
-        private string _mailgunDomainName;
-        private IPFetchDataCache _dataCache;
+	public IPFetchService(IOptions<IPFetchConfig> config, ILogger<IPFetchService> logger) =>
+		(_config, _logger) = (config, logger);
 
-        public IPFetchService()
-        {
-            _logger = LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
-            log4net.Config.XmlConfigurator.Configure();
+	public async Task CheckIP()
+	{
+		var currentIP = await GetCurrentIP();
+		var cache = GetCacheState();
 
-            InitializeComponent();
-            InitializeSettings();
-        }
+		if (currentIP != cache.CachedIP && currentIP != null)
+		{
+			_logger.LogInformation("IP has changed!");
 
-        private void InitializeSettings()
-        {
-            try
-            {
-                _receiverEmail = ConfigurationManager.AppSettings["receiverEmail"];
-                _receiverName = ConfigurationManager.AppSettings["receiverName"];
-                _cachePath = ConfigurationManager.AppSettings["cacheFilePath"];
-                _checkIntervalSec = int.Parse(ConfigurationManager.AppSettings["ipCheckIntervalSeconds"]);
-                _dnsUpdateUrls = ConfigurationManager.AppSettings["dnsUpdateUrls"].Split(',');
-                _ipAddressProviderUrl = ConfigurationManager.AppSettings["ipAddressProviderUrl"];
-                _mailgunAPIKey = ConfigurationManager.AppSettings["mailgunAPIKey"];
-                _mailgunDomainName = ConfigurationManager.AppSettings["mailgunDomainName"];
-                _machineName = Environment.MachineName;
-                _dataCache = IPFetchDataCache.GetOrCreate(_cachePath);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error("Unable to initialize settings", ex);
-                _keepRunning = false;
-            }
-        }
+			cache.CachedIP = currentIP;
+			cache.NotificationSentSinceLastChange = false;
+			SaveCacheState(cache);
+			await UpdateDNS();
+		}
 
+		if (!cache.NotificationSentSinceLastChange)
+		{
+			await SendEmail(cache.CachedIP);
+		}
+	}
 
-        protected override void OnStart(string[] args)
-        {
-            _logger.Info("IPFetch is starting...");
-            Task.Run(() => { StartCheckingIP(); }, CancellationToken.None);
-        }
+	private async Task<string?> GetCurrentIP()
+	{
+		try
+		{
+			var currentIP = await (await _httpClient.GetAsync(_config.Value.IpAddressProviderUrl))
+				.Content
+				.ReadAsStringAsync();
 
-        protected override void OnStop()
-        {
-            _keepRunning = false;
-            _logger.Info("IPFetch is shutting down.");
-        }
+			return currentIP.Trim();
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError("Unable to get IP address from provider", ex);
+			return null;
+		}
+	}
 
-        private void StartCheckingIP()
-        {
-            while (_keepRunning)
-            {
-                CheckIP();
-                Thread.Sleep(_checkIntervalSec * 1000);
-            }
-        }
+	private async Task SendEmail(string? ipAddress)
+	{
+		if (ipAddress == null)
+		{
+			_logger.LogWarning("Attempted to send notifications on IP address with a null value.");
+			return;
+		}
 
-        private void CheckIP()
-        {
-            var currentIP = GetCurrentIP();
+		if (
+			string.IsNullOrWhiteSpace(_config.Value.MailgunAPIKey) ||
+			string.IsNullOrWhiteSpace(_config.Value.MailgunDomainName)
+		)
+		{
+			_logger.LogWarning("Mailgun configuration incomplete. Unable to send e-mail notification.");
+			return;
+		}
 
-            if (currentIP != _dataCache.CachedIP && currentIP != null)
-            {
-                _logger.Info("IP has changed!");
+		_logger.LogInformation("Sending notification email");
 
-                _dataCache.CachedIP = currentIP;
-                _dataCache.NotificationSentSinceLastChange = false;
-                _dataCache.Save();
-                UpdateDNS();
-            }
+		try
+		{
+			RestClient client = new RestClient("https://api.mailgun.net/v3");
+			client.Authenticator = new HttpBasicAuthenticator("api", $"{_config.Value.MailgunAPIKey}");
 
-            if (!_dataCache.NotificationSentSinceLastChange)
-            {
-                SendEmail(_dataCache.CachedIP);
-            }
-        }
+			RestRequest request = new RestRequest();
+			request.AddParameter("domain", _config.Value.MailgunDomainName, ParameterType.UrlSegment);
+			request.Resource = "{domain}/messages";
+			request.AddParameter("from", $"IPFetch <ipfetch-noreply@{_config.Value.MailgunDomainName}>");
+			request.AddParameter("to", $"{_config.Value.ReceiverName} <{_config.Value.ReceiverEmail}>");
+			request.AddParameter("subject", $"IPFetch update for {Environment.MachineName}");
+			request.AddParameter("text",
+				$"Hi {_config.Value.ReceiverName},\r\n\r\nThe IP for your machine ({Environment.MachineName}) has changed since we last checked and is now: {ipAddress}");
+			request.Method = Method.Post;
 
-        private string GetCurrentIP()
-        {
-            try
-            {
-                var externalIP = new WebClient().DownloadString(_ipAddressProviderUrl);
-                return externalIP.TrimEnd();
-            }
-            catch (Exception ex)
-            {
-                _logger.Error("Unable to get IP address from provider", ex);
-                return null;
-            }
-        }
+			await client.ExecuteAsync(request);
 
-        private void SendEmail(string ipAddress)
-        {
-            if (string.IsNullOrWhiteSpace(_mailgunAPIKey) || string.IsNullOrWhiteSpace(_mailgunDomainName))
-            {
-                _logger.Warn("Mailgun configuration incomplete. Unable to send e-mail notification.");
-                return;
-            }
+			var cache = GetCacheState();
+			cache.NotificationSentSinceLastChange = true;
+			SaveCacheState(cache);
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError("Failed to send e-mail notification.", ex);
+		}
+	}
 
-            _logger.Info("Sending notification email");
+	private async Task UpdateDNS()
+	{
+		var dnsUpdateUrls = _config.Value.DnsUpdateUrls?.Split(",") ?? new string[0];
 
-            try
-            {
-                RestClient client = new RestClient();
-                client.BaseUrl = new Uri("https://api.mailgun.net/v3");
-                client.Authenticator = new HttpBasicAuthenticator("api", $"{_mailgunAPIKey}");
-                RestRequest request = new RestRequest();
-                request.AddParameter("domain", _mailgunDomainName, ParameterType.UrlSegment);
-                request.Resource = "{domain}/messages";
-                request.AddParameter("from", $"IPFetch <ipfetch-noreply@{_mailgunDomainName}>");
-                request.AddParameter("to", $"{_receiverName} <{_receiverEmail}>");
-                request.AddParameter("subject", $"IPFetch update for {_machineName}");
-                request.AddParameter("text",
-                    $"Hi {_receiverName},\r\n\r\nThe IP for your machine ({_machineName}) has changed since we last checked and is now: {ipAddress}");
-                request.Method = Method.POST;
+		_logger.LogInformation("Updating DNS");
 
-                client.Execute(request);
-                _dataCache.NotificationSentSinceLastChange = true;
-                _dataCache.Save();
-            }
-            catch (Exception ex)
-            {
-                _logger.Error("Failed to send e-mail notification.", ex);
-            }
-        }
+		foreach (var url in dnsUpdateUrls)
+		{
+			if (!string.IsNullOrWhiteSpace(url))
+			{
+				try
+				{
+					var response = await (await _httpClient.GetAsync(url)).Content.ReadAsStringAsync();
+					_logger.LogInformation(response);
+				}
+				catch (Exception ex)
+				{
+					_logger.LogError($"Failed to update DNS ({url})", ex);
+				}
+			}
+		}
 
-        private void UpdateDNS()
-        {
-            if (_dnsUpdateUrls != null)
-            {
-                _logger.Info("Updating DNS");
+		_logger.LogInformation("Finished updating DNS");
 
-                foreach (var url in _dnsUpdateUrls)
-                {
-                    if (!string.IsNullOrWhiteSpace(url))
-                    {
-                        try
-                        {
-                            var response = new WebClient().DownloadString(url);
-                            _logger.Info(response);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.Error($"Failed to update DNS ({url})", ex);
-                        }
-                    }
-                }
+	}
 
-                _logger.Info("Finished updating DNS");
-            }
-        }
-    }
+	private IPFileCache GetCacheState()
+	{
+		var filePath = _config.Value.CacheFilePath;
+		if (filePath == null) throw new Exception("Cache file path is null. Please set it up in config.");
+		if (File.Exists(filePath))
+		{
+			var contents = File.ReadAllText(filePath);
+			return JsonSerializer.Deserialize<IPFileCache>(contents) ?? CreateNewFileCache();
+		}
+		else
+		{
+			return CreateNewFileCache();
+		}
+	}
+
+	private IPFileCache CreateNewFileCache()
+	{
+		return new IPFileCache
+		{
+			NotificationSentSinceLastChange = true,
+			CachedIP = null,
+		};
+	}
+
+	private void SaveCacheState(IPFileCache cache)
+	{
+		var filePath = _config.Value.CacheFilePath;
+		if (filePath == null) throw new Exception("Cache file path is null. Please set it up in config.");
+		if (!Directory.Exists(Path.GetDirectoryName(filePath))) throw new Exception($"Cache file path directory does not exist. Please create it ({Path.GetDirectoryName(filePath)}).");
+		var serialized = JsonSerializer.Serialize(cache);
+		File.WriteAllText(filePath, serialized);
+	}
 }

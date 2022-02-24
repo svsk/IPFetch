@@ -1,20 +1,16 @@
-﻿using System.ServiceProcess;
+using IPFetch.Configuration;
 
-namespace IPFetch
-{
-    static class Program
-    {
-        /// <summary>
-        /// The main entry point for the application.
-        /// </summary>
-        static void Main()
-        {
-            ServiceBase[] ServicesToRun;
-            ServicesToRun = new ServiceBase[]
-            {
-                new IPFetchService()
-            };
-            ServiceBase.Run(ServicesToRun);
-        }
-    }
-}
+IHost host = Host.CreateDefaultBuilder(args)
+	.ConfigureAppConfiguration(opt =>
+	{
+		opt.AddJsonFile("appsettings.local.json", true);
+	})
+	.ConfigureServices((context, services) =>
+	{
+		services.AddHostedService<WindowsBackgroundService>();
+		services.Configure<IPFetchConfig>(context.Configuration);
+		services.AddTransient<IPFetchService>();
+	})
+	.Build();
+
+await host.RunAsync();
