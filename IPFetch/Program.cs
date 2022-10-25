@@ -1,6 +1,7 @@
 using IPFetch.Configuration;
 
 IHost host = Host.CreateDefaultBuilder(args)
+	.UseWindowsService(opt => opt.ServiceName = "IPFetch")
 	.ConfigureAppConfiguration(opt =>
 	{
 		opt.AddJsonFile("appsettings.local.json", true);
