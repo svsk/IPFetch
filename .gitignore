@@ -3,6 +3,7 @@
 *.user
 *.sln.docstates
 *.local.*
+logs/
 
 # Build results
 [Dd]ebug/
