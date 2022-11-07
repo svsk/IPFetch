@@ -10,14 +10,15 @@ IHost host = Host.CreateDefaultBuilder(args)
 	.ConfigureServices((context, services) =>
 	{
 		var logConfig = new LoggerConfiguration()
-			.Enrich.FromLogContext()
-			.WriteTo.Console();
+			.Enrich.FromLogContext();
 
 		var shouldLogToFile = context.Configuration["enableLoggingToFile"] == "True";
 		if (shouldLogToFile)
 		{
+			var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs/IPFetchLog.txt");
+
 			logConfig.WriteTo.File(
-				"logs/IPFetchLog.txt",
+				path,
 				rollingInterval: RollingInterval.Day,
 				fileSizeLimitBytes: 10500000
 			);
