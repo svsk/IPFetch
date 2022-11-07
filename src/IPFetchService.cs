@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Net;
+using System.Text.Json;
 using IPFetch.Configuration;
 using Microsoft.Extensions.Options;
 using RestSharp;
@@ -38,11 +39,23 @@ public class IPFetchService
 	{
 		try
 		{
-			var currentIP = await (await _httpClient.GetAsync(_config.Value.IpAddressProviderUrl))
-				.Content
-				.ReadAsStringAsync();
+			var result = await _httpClient.GetAsync(_config.Value.IpAddressProviderUrl);
+			if (!result.IsSuccessStatusCode)
+			{
+				throw new Exception("IP provider failed to return OK status.");
+			}
 
-			return currentIP.Trim();
+			var currentIP = (await result
+				.Content
+				.ReadAsStringAsync())
+				.Trim();
+
+			if (!IPAddress.TryParse(currentIP, out var currentIPAddress))
+			{
+				throw new Exception("IP address could not be found in response from provider.");
+			}
+
+			return currentIPAddress.ToString();
 		}
 		catch (Exception ex)
 		{

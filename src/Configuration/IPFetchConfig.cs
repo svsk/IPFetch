@@ -2,6 +2,7 @@ namespace IPFetch.Configuration;
 
 public class IPFetchConfig
 {
+	public bool EnableLoggingToFile { get; set; }
 	public string? IpAddressProviderUrl { get; set; }
 	public string? ReceiverEmail { get; set; }
 	public string? ReceiverName { get; set; }
